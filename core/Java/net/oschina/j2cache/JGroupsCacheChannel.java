@@ -107,7 +107,12 @@ public class JGroupsCacheChannel extends ReceiverAdapter implements CacheExpired
 		}
 		//log.info("write data to cache region="+region+",key="+key+",value="+value);
 	}
-	
+
+	@Override
+	public void set(String region, Object key, Object value, int expiredTime) {
+
+	}
+
 	/**
 	 * 删除缓存
 	 * @param region:  Cache Region name

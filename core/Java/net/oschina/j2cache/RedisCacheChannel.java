@@ -1,15 +1,14 @@
 package net.oschina.j2cache;
 
-import java.util.List;
-
 import net.oschina.j2cache.redis.RedisCacheProvider;
-
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
 import redis.clients.jedis.BinaryJedisPubSub;
 import redis.clients.jedis.Jedis;
 import redis.clients.util.SafeEncoder;
+
+import java.util.Date;
+import java.util.List;
 
 /**
  * 缓存Redis PUB/SUB监听通道
@@ -34,7 +33,7 @@ public class RedisCacheChannel extends BinaryJedisPubSub implements CacheExpired
 	}
 
 	/**
-	 * 初始化缓存通道并连接
+	 * 初始化缓存通道并连接long
 	 * 
 	 * @param name
 	 *            : 缓存实例名称
@@ -74,18 +73,37 @@ public class RedisCacheChannel extends BinaryJedisPubSub implements CacheExpired
 	 */
 	public CacheObject get(String region, Object key) {
 		CacheObject obj = new CacheObject();
-		obj.setRegion(region);
-		obj.setKey(key);
+		/*obj.setRegion(region);
+		obj.setKey(key);*/
 		if (region != null && key != null) {
-			obj.setValue(CacheManager.get(LEVEL_1, region, key));
-			if (obj.getValue() == null) {
-				obj.setValue(CacheManager.get(LEVEL_2, region, key));
-				if (obj.getValue() != null) {
-					obj.setLevel(LEVEL_2);
-					CacheManager.set(LEVEL_1, region, key, obj.getValue());
+			obj = (CacheObject) CacheManager.get(LEVEL_1, region, key);
+			if (obj == null) {
+				obj = (CacheObject) CacheManager.get(LEVEL_2, region, key);
+				if (obj != null) {
+					if (obj.isExpired()) {
+						obj.setValue(null);
+						evict(region, key);
+					} else {
+						obj.setLevel(LEVEL_2);
+						obj.setLastAccessTime(new Date().getTime());
+						CacheManager.set(LEVEL_1, region, key, obj);
+						CacheManager.set(LEVEL_2, region, key, obj);
+					}
 				}
-			} else
+				else {
+					obj=new CacheObject();
+					obj.setRegion(region);
+					obj.setKey(key);
+				}
+			} else {
+
 				obj.setLevel(LEVEL_1);
+				obj.setLastAccessTime(new Date().getTime());
+				if (obj.isExpired()) {
+					obj.setValue(null);
+					evict(region, key);
+				}
+			}
 		}
 		return obj;
 	}
@@ -112,9 +130,34 @@ public class RedisCacheChannel extends BinaryJedisPubSub implements CacheExpired
 				// 2. L1 有 L2 没有（这种情况不存在，除非是写 L2 的时候失败
 				// 3. L1 没有，L2 有
 				// 4. L1 和 L2 都有
+				CacheObject cache=new CacheObject(key,value);
+				cache.setRegion(region);
 				_sendEvictCmd(region, key);// 清除原有的一级缓存的内容
-				CacheManager.set(LEVEL_1, region, key, value);
-				CacheManager.set(LEVEL_2, region, key, value);
+				CacheManager.set(LEVEL_1, region, key, cache);
+				CacheManager.set(LEVEL_2, region, key, cache);
+			}
+		}
+		// log.info("write data to cache region="+region+",key="+key+",value="+value);
+	}
+
+	@Override
+	public void set(String region, Object key, Object value, int expiredTime) {
+		if (region != null && key != null) {
+			if (value == null)
+				evict(region, key);
+			else {
+				// 分几种情况
+				// Object obj1 = CacheManager.get(LEVEL_1, region, key);
+				// Object obj2 = CacheManager.get(LEVEL_2, region, key);
+				// 1. L1 和 L2 都没有
+				// 2. L1 有 L2 没有（这种情况不存在，除非是写 L2 的时候失败
+				// 3. L1 没有，L2 有
+				// 4. L1 和 L2 都有
+				CacheObject cache=new CacheObject(key,value,expiredTime);
+				cache.setRegion(region);
+				_sendEvictCmd(region, key);// 清除原有的一级缓存的内容
+				CacheManager.set(LEVEL_1, region, key, cache);
+				CacheManager.set(LEVEL_2, region, key, cache);
 			}
 		}
 		// log.info("write data to cache region="+region+",key="+key+",value="+value);
@@ -231,24 +274,31 @@ public class RedisCacheChannel extends BinaryJedisPubSub implements CacheExpired
 
 	/**
 	 * 删除一级缓存的键对应内容
+	 * add remove all cache incldue level1 and level2
 	 * @param region : Cache region name
 	 * @param key  : cache key
 	 */
 	@SuppressWarnings("rawtypes")
 	protected void onDeleteCacheKey(String region, Object key) {
-		if (key instanceof List)
+		if (key instanceof List){
 			CacheManager.batchEvict(LEVEL_1, region, (List) key);
-		else
+			CacheManager.batchEvict(LEVEL_2, region, (List) key);
+		}
+		else{
 			CacheManager.evict(LEVEL_1, region, key);
+			CacheManager.evict(LEVEL_2, region, key);
+		}
 		log.debug("Received cache evict message, region=" + region + ",key=" + key);
 	}
 
 	/**
 	 * 清除一级缓存的键对应内容
+	 * add clear level 2 data
 	 * @param region Cache region name
 	 */
 	protected void onClearCacheKey(String region){
 		CacheManager.clear(LEVEL_1, region);
+		CacheManager.clear(LEVEL_2, region);
 		log.debug("Received cache clear message, region="+region);
 	}
 	

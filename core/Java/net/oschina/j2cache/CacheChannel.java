@@ -28,6 +28,13 @@ public interface CacheChannel {
 	public void set(String region, Object key, Object value);
 
 	/**
+	 * 写入缓存
+	 * @param region: Cache Region name
+	 * @param key: Cache key
+	 * @param value: Cache value
+	 */
+	public void set(String region, Object key, Object value,int expiredTime);
+	/**
 	 * 删除缓存
 	 * @param region:  Cache Region name
 	 * @param key: Cache key
